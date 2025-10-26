@@ -73,6 +73,8 @@ Como Claude Code, puedo:
 - ❌ NO puedo acceder a tu cuenta de Google Colab
 - ❌ NO puedo ver notebooks privados sin que los compartas
 
+**¿Por qué estas limitaciones?** Lee la [explicación técnica completa](POR_QUE_NO_COLAB_DIRECTO.md) que incluye alternativas y qué se necesitaría para hacerlo posible.
+
 ## Preguntas frecuentes
 
 **P: ¿Puedes ejecutar código en mi Colab?**
