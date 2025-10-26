@@ -9,6 +9,9 @@
 ### Configuración en Windows
 - **[Solucionar error de git-bash en Windows](SOLUCIONAR_GIT_BASH_WINDOWS.md)** - Guía paso a paso
 
+### Problemas en Ubuntu/Linux
+- **[Solucionar error de apt/dpkg lock](SOLUCIONAR_APT_DPKG_UBUNTU.md)** - Errores de dpkg e instalación de Node.js
+
 ---
 
 ## Inicio rápido
@@ -28,3 +31,23 @@ Si ves error de git-bash:
 3. Reinicia VS Code
 
 Ver [guía detallada](SOLUCIONAR_GIT_BASH_WINDOWS.md) para más opciones.
+
+### Solucionar error de apt en Ubuntu
+
+Si ves "unable to acquire the dpkg frontend lock":
+
+**Solución rápida:**
+```bash
+# 1. Verificar si hay procesos de apt corriendo
+ps aux | grep -i apt
+
+# 2. Esperar 5 minutos si los hay, o eliminar locks:
+sudo rm /var/lib/dpkg/lock-frontend
+sudo dpkg --configure -a
+
+# 3. Instalar Node.js correctamente
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+Ver [guía completa](SOLUCIONAR_APT_DPKG_UBUNTU.md) para más soluciones.
