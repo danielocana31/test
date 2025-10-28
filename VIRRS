@@ -1,0 +1,189 @@
+// ==========================
+// 1) VIIRS DNB anual (avg_rad)
+// ==========================
+var dnbAnnual = ee.ImageCollection('NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG') // mensual, stray-light corregido
+  .filterDate('2024-01-01', '2025-01-01')
+  .select('avg_rad')
+  .median(); // o .mean()
+
+// (Opcional) umbral para quitar brillo muy bajo / ruido
+var dnbClean = dnbAnnual.updateMask(dnbAnnual.gt(0.01)); // ajusta 0.3–1.0 según tu caso
+var lat=-77.02761903350103
+var lon=-12.052400231162345
+Map.centerObject(ee.Geometry.Point([lat, lon]), 14);
+Map.addLayer(dnbClean, {min:0, max:40}, 'VIIRS anual (avg_rad)');
+
+// ==========================
+// 2) Proxy de flujo radiante = radiancia * área de píxel
+//    (define radiantFluxProxy ANTES de usarlo)
+// ==========================
+var pixelArea = ee.Image.pixelArea();              // m² por píxel
+var radiantFluxProxy = dnbClean.multiply(pixelArea);
+// Unidades: (nW·cm^-2·sr^-1) * m²  → métrica proporcional a “total de luz”
+
+// ==========================
+// 3) Define tu cuadrado (elige UNA de estas dos formas)
+// ==========================
+
+// A) Centro + tamaño (lado ≈ 10 km si halfSide=5000 m)
+var center = ee.Geometry.Point([lat, lon]);
+var halfSide = 1000; // metros
+var square = center.buffer(halfSide).bounds(); // cuadrado alineado N-E-S-O
+
+/*
+// B) Esquinas opuestas del rectángulo (lon/lat)
+var square = ee.Geometry.Rectangle([-77.10, -12.10, -77.00, -12.00], null, false);
+*/
+
+Map.addLayer(square, {color: 'red'}, 'Cuadrado');
+
+// ==========================
+// 4) Suma ponderada dentro del cuadrado
+// ==========================
+var sumFlux = radiantFluxProxy.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: square,
+  scale: 463,       // resolución nativa VIIRS DNB
+  maxPixels: 1e13,
+  bestEffort: true
+});
+
+print('Suma (avg_rad * área de píxel) en el cuadrado:', sumFlux);
+
+// (Opcional) si prefieres la suma simple de radiancia (sin área de píxel):
+var sumRadiance = dnbClean.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: square,
+  scale: 463,
+  maxPixels: 1e13,
+  bestEffort: true
+});
+print('Suma simple de radiancia en el cuadrado:', sumRadiance);
+
+//////////////////////////////////////////
+// 4) Construye un reducer con varias estadísticas
+// min, max, stdDev, median, count, sum (y el rango = max - min lo calculamos después)
+// var multiReducer = ee.Reducer.min()
+//   .combine(ee.Reducer.max(), '', true)
+//   .combine(ee.Reducer.stdDev(), '', true)
+//   .combine(ee.Reducer.median(), '', true)
+//   .combine(ee.Reducer.count(), '', true)
+//   .combine(ee.Reducer.sum(), '', true);
+
+// // 5) Aplica a la imagen (radiancia) dentro del cuadrado
+// var statsRad = dnbClean.reduceRegion({
+//   reducer: multiReducer,
+//   geometry: square,
+//   scale: 463,           // resolución nativa VIIRS DNB
+//   maxPixels: 1e13,
+//   bestEffort: true
+// });
+
+// // 6) (Opcional) Aplica a la imagen “radiancia×área” (proxy de flujo)
+// var statsFlux = radiantFluxProxy.reduceRegion({
+//   reducer: multiReducer,
+//   geometry: square,
+//   scale: 463,
+//   maxPixels: 1e13,
+//   bestEffort: true
+// });
+
+// // 7) Calcula el rango (max - min) a partir del diccionario
+// var rangeRad = ee.Number(statsRad.get('avg_rad_max'))
+//   .subtract(ee.Number(statsRad.get('avg_rad_min')));
+// var rangeFlux = ee.Number(statsFlux.get('avg_rad_sum')) // ojo: aquí 'sum' es de (rad*area)
+//   // Para el rango en “flux” usa max - min del proxy:
+//   // ee.Number(statsFlux.get('avg_rad_max')).subtract(ee.Number(statsFlux.get('avg_rad_min')))
+//   ;
+
+// // 8) Imprime resultados
+// print('--- Radiancia (avg_rad) ---');
+// print('Min:', statsRad.get('avg_rad_min'));
+// print('Max:', statsRad.get('avg_rad_max'));
+// print('StdDev:', statsRad.get('avg_rad_stdDev'));
+// print('Median:', statsRad.get('avg_rad_median'));
+// print('Count (pix válidos):', statsRad.get('avg_rad_count'));
+// print('Sum:', statsRad.get('avg_rad_sum'));
+// print('Range (max - min):', rangeRad);
+
+// print('--- Radiancia×Área (proxy de flujo) ---');
+// print('Min:', statsFlux.get('avg_rad_min'));
+// print('Max:', statsFlux.get('avg_rad_max'));
+// print('StdDev:', statsFlux.get('avg_rad_stdDev'));
+// print('Median:', statsFlux.get('avg_rad_median'));
+// print('Count:', statsFlux.get('avg_rad_count'));
+// print('Sum (≈ “total” en el área):', statsFlux.get('avg_rad_sum'));
+// print('Range (proxy):', ee.Number(statsFlux.get('avg_rad_max')).subtract(ee.Number(statsFlux.get('avg_rad_min'))));
+
+ 
+//////////////////////////
+
+
+// -------- Estadísticas --------
+//var pixelArea = ee.Image.pixelArea()//.updateMask(dnb.mask()); // m² solo donde hay datos
+var flux = radiantFluxProxy;                          // proxy integrado: rad * área
+
+// 1) Integrado (total proxy) y área válida
+var sums = ee.Image.cat([
+  flux.rename('flux'),           // rad * area
+  pixelArea.rename('area')       // m²
+]).reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: square,
+  scale: 463,
+  maxPixels: 1e13,
+  bestEffort: true
+});
+
+var totalFlux = ee.Number(sums.get('flux'));   // ∑(rad*area)
+var areaValid = ee.Number(sums.get('area'));   // ∑(area)
+
+// 2) Media ponderada por área (sí, aquí "divides por el área")
+var meanRadiance = totalFlux.divide(areaValid); // rad promedio (nW·cm^-2·sr^-1)
+
+// 3) Min, Max, Mediana (no se dividen por área)
+var basic = dnbClean.reduceRegion({
+  reducer: ee.Reducer.min().combine(ee.Reducer.max(), '', true)
+                      .combine(ee.Reducer.median(), '', true),
+  geometry: square,
+  scale: 463,
+  maxPixels: 1e13,
+  bestEffort: true
+});
+var minRad = basic.get('avg_rad_min');
+var maxRad = basic.get('avg_rad_max');
+var medRad = basic.get('avg_rad_median');
+var rangeRad = ee.Number(maxRad).subtract(ee.Number(minRad));
+
+// 4) Desviación estándar ponderada por área
+var x   = dnbClean;
+var w   = pixelArea;
+var xw  = x.multiply(w);
+var x2w = x.pow(2).multiply(w);
+
+var mom = ee.Image.cat([
+  w.rename('w'), xw.rename('xw'), x2w.rename('x2w')
+]).reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: square,
+  scale: 463,
+  maxPixels: 1e13,
+  bestEffort: true
+});
+
+var sumW  = ee.Number(mom.get('w'));
+var sumXW = ee.Number(mom.get('xw'));
+var sumX2W= ee.Number(mom.get('x2w'));
+
+var wMean = sumXW.divide(sumW);
+var wVar  = sumX2W.divide(sumW).subtract(wMean.pow(2)).max(0);
+var wStd  = wVar.sqrt();
+
+// ---- Imprime todo ----
+print('Área válida (m²):', areaValid);
+print('Total (rad*área):', totalFlux);
+print('Media (rad, ponderada por área):', meanRadiance);
+print('Mín:', minRad, 'Máx:', maxRad, 'Mediana:', medRad, 'Rango:', rangeRad);
+print('Desv. estándar (ponderada por área):', wStd);
+
+
